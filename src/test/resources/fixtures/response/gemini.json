@@ -1,0 +1,29 @@
+{
+  "candidates": [
+    {
+      "finishReason": "STOP",
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "The answer is 42."
+          },
+          {
+            "functionCall": {
+              "name": "get_weather",
+              "args": {
+                "city": "Paris"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 10,
+    "candidatesTokenCount": 5,
+    "thoughtsTokenCount": 2,
+    "totalTokenCount": 15
+  }
+}

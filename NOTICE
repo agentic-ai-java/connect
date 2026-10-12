@@ -1,0 +1,24 @@
+connect
+许可与第三方依赖声明
+
+1. 项目许可证
+
+connect 采用 MIT 协议分发，完整许可证文本见 LICENSE 文件。
+本声明记录第三方依赖信息，不替代或修改其适用的许可条款。
+
+2. 第三方依赖
+
+Gson 2.13.2
+  用途：运行时 JSON 解析与序列化。
+  许可证：Apache License 第 2.0 版。
+  项目地址：https://github.com/google/gson
+  许可证文本：https://www.apache.org/licenses/LICENSE-2.0
+
+JUnit Jupiter 5.13.4
+  用途：自动化测试，仅用于测试作用域。
+  许可证：Eclipse Public License 第 2.0 版。
+  项目地址：https://junit.org/
+  许可证文本：https://www.eclipse.org/legal/epl-2.0/
+
+上述依赖通过 Maven 引用，其实现源代码未包含在本仓库中。
+第三方组件分别遵循各自的许可条款。
