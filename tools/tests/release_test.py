@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 import urllib.error
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
 from zipfile import ZipFile
@@ -23,7 +24,11 @@ class ReleaseTest(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         (self.root / "target").mkdir()
-        (self.root / "pom.xml").write_bytes((ROOT / "pom.xml").read_bytes())
+        # Keep fixture coordinates stable when the actual project version changes.
+        pom = ET.parse(ROOT / "pom.xml")
+        pom.getroot().find("m:version", release.NS).text = "0.1.0"
+        ET.register_namespace("", release.NS["m"])
+        pom.write(self.root / "pom.xml", encoding="utf-8", xml_declaration=True)
         for suffix, name, data in (("", "Connect.class", b"\xca\xfe\xba\xbe\x00\x00\x00\x3d"),
                                    ("-sources", "Connect.java", b"class Connect {}"),
                                    ("-javadoc", "Connect.html", b"<html></html>")):
