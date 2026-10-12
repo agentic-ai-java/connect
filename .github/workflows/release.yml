@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and publish
+        required: true
+        type: string
+        default: v0.1.0
+      publish:
+        description: Publish to Maven Central and GitHub after verification
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+      CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+      MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify immutable release target
+        shell: bash
+        run: |
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          python3 - <<'PY'
+          import json, os, re, subprocess, xml.etree.ElementTree as ET
+          tag = os.environ['RELEASE_TAG']
+          assert re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', tag), 'Invalid release tag'
+          root = ET.parse('pom.xml').getroot()
+          ns = {'m': 'http://maven.apache.org/POM/4.0.0'}
+          assert root.findtext('m:groupId', namespaces=ns) == 'io.github.agentic-ai-java'
+          assert root.findtext('m:artifactId', namespaces=ns) == 'connect'
+          version = root.findtext('m:version', namespaces=ns)
+          assert tag == 'v' + version and not version.endswith('-SNAPSHOT'), 'Tag/version mismatch'
+          sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          release = json.loads(subprocess.check_output([
+              'gh', 'release', 'view', tag, '--repo', os.environ['GITHUB_REPOSITORY'],
+              '--json', 'isDraft,targetCommitish'
+          ], text=True))
+          assert release['isDraft'] and release['targetCommitish'] == sha, 'Release draft target mismatch'
+          PY
+
+      - name: Check publishing credentials
+        shell: bash
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          test -n "$CENTRAL_USERNAME"
+          test -n "$CENTRAL_PASSWORD"
+          test -n "$GPG_PRIVATE_KEY"
+
+      - name: Set up Java and signing
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: pom.xml
+          server-id: central
+          server-username: CENTRAL_USERNAME
+          server-password: CENTRAL_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+      - name: Test release tooling
+        run: python3 -B -m unittest discover -s tools/tests -p '*_test.py' -v
+
+      - name: Build, test, and sign
+        run: mvn -B --no-transfer-progress -Prelease clean verify
+
+      - name: Verify signed release artifacts
+        run: python3 -B tools/release.py verify --signed
+
+      - name: Audit resolved runtime dependencies
+        run: |
+          mvn -B --no-transfer-progress org.apache.maven.plugins:maven-dependency-plugin:3.9.0:tree -Dscope=runtime -DoutputType=json -DoutputFile=target/runtime-dependencies.json
+          python3 -B tools/release.py audit
+
+      - name: Verify gateway examples
+        run: |
+          mvn -B --no-transfer-progress install
+          mvn -B --no-transfer-progress -f examples/pom.xml clean verify
+
+      - name: Publish and wait for Maven Central
+        if: ${{ inputs.publish }}
+        run: mvn -B --no-transfer-progress -Prelease deploy
+
+      - name: Publish GitHub release after Central succeeds
+        if: ${{ inputs.publish }}
+        shell: bash
+        run: |
+          gh release upload "$RELEASE_TAG" target/connect-*.jar target/connect-*.asc target/connect-*.pom --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+      - name: Archive release artifacts and reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ inputs.tag }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            target/connect-*.jar
+            target/connect-*.pom
+            target/connect-*.asc
+            target/central-publishing/
+            target/surefire-reports/
+            target/site/jacoco/
+            target/runtime-dependencies.json
+            examples/target/surefire-reports/

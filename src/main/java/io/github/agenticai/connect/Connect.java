@@ -20,13 +20,29 @@ public final class Connect {
         ConversionContext ctx = context == null ? new ConversionContext() : context;
         JsonObject value = request.deepCopy(); List<Diagnostic> diagnostics = new ArrayList<>();
         List<ConversionResult.Step> steps = new ArrayList<>();
+        Work finalWork = new Work(from, to, ctx, mediaResolver);
+        finalWork.requestModel = finalWork.model(request);
+        ProviderProfile profile = ctx.options.providerProfile;
+        // Resolve intent once. Intermediate protocol defaults must not overwrite the source intent.
+        if (path.size() > 1 || profile != null) {
+            Reasoning.Intent intent = Reasoning.read(from, request);
+            if (ctx.reasoning != null && intent != null && !ctx.reasoning.equals(intent))
+                finalWork.warn("reasoning_overridden", "reasoning", "Context reasoning overrides the request controls");
+            if (ctx.reasoning == null) ctx.reasoning = intent;
+        }
+        if (!ctx.upstreamModel.isEmpty() && to != Format.GEMINI) Json.put(value, "model", ctx.upstreamModel);
         for (int i = 1; i < path.size(); i++) {
             Format source = path.get(i - 1), target = path.get(i);
             Work work = new Work(source, target, ctx, mediaResolver);
             value = RequestCodec.convert(source, target, value, work);
             diagnostics.addAll(work.diagnostics); steps.add(step(source, target));
         }
-        Work finalWork = new Work(from, to, ctx, mediaResolver); finalWork.diagnostics.addAll(diagnostics); finalWork.rejectLoss();
+        if ((path.size() > 1 || profile != null) && (profile == null || !profile.rendersReasoning()))
+            Reasoning.render(ctx.reasoning, to, value, finalWork);
+        if (to == Format.OPENAI_CHAT && (path.size() > 1 || profile != null)) RequestHistory.normalizeChat(value, finalWork);
+        if (profile != null) profile.adapt(value, new ProviderProfile.Adaptation(finalWork));
+        diagnostics.addAll(finalWork.diagnostics);
+        finalWork.diagnostics.clear(); finalWork.diagnostics.addAll(diagnostics); finalWork.rejectLoss();
         return result(value, from, to, steps, diagnostics, Usage.empty(), false);
     }
     public ConversionResult convertResponse(Format from, Format to, String json) { return convertResponse(from, to, Json.object(json), null); }

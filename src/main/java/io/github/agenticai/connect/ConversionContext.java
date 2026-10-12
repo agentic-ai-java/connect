@@ -7,6 +7,7 @@ import java.util.Objects;
 /** Per-request context; reuse tool encodings when converting the corresponding response or stream. */
 public final class ConversionContext {
     public String originModel = "";
+    /** Explicit routed model override; leave empty to retain the request model. */
     public String upstreamModel = "";
     public Reasoning.Intent reasoning;
     public final Options options;

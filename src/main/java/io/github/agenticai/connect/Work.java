@@ -21,7 +21,7 @@ final class Work {
         Diagnostic diagnostic = new Diagnostic(code, path, message, severity, from, to);
         if (!diagnostics.contains(diagnostic)) diagnostics.add(diagnostic);
     }
-    String model(JsonObject request) { return !s(request, "model").isEmpty() ? s(request, "model") : !requestModel.isEmpty() ? requestModel : ctx.upstreamModel; }
+    String model(JsonObject request) { return !ctx.upstreamModel.isEmpty() ? ctx.upstreamModel : !s(request, "model").isEmpty() ? s(request, "model") : requestModel; }
     MediaResolver.MediaData resolve(String source) {
         if (source.startsWith("data:")) return MediaResolver.decodeDataUrl(source);
         if (media == null) throw new ConversionException("需要 MediaResolver 解析媒体：" + source);

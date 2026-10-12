@@ -10,6 +10,8 @@ import java.util.function.ToIntFunction;
 public final class Options {
     public enum LossPolicy { ALLOW, SAFE, STRICT }
     public LossPolicy toolLossPolicy = LossPolicy.ALLOW;
+    /** Optional final-request adapter; null preserves generic protocol behavior. */
+    public ProviderProfile providerProfile;
     public ToIntFunction<String> claudeDefaultMaxTokens;
     public String claudeWebSearchVersion = "web_search_20250305";
     public double thinkingBudgetPercentage = 0.6;

@@ -59,6 +59,9 @@ final class ResponseCodec {
                         }
                         case "reasoning" -> {
                             for (JsonElement summary : Json.a(item, "summary")) reasoning.append(Json.s(Json.o(summary), "text"));
+                            if (!Json.a(item, "summary").isEmpty())
+                                w.warn("reasoning_summary_not_replayable", "output.summary",
+                                        "Reasoning summaries are mapped for display only; retain original history rather than replaying them as complete reasoning_content");
                             if (item.has("encrypted_content")) w.warn("encrypted_reasoning_omitted", "output", "供应商加密推理未跨协议传递");
                         }
                         case "function_call", "custom_tool_call" -> {

@@ -18,8 +18,12 @@ public record Usage(long inputTokens, long outputTokens, long totalTokens, long 
         long input, output, cache, write = 0, five = 0, hour = 0, thought;
         switch (format) {
             case OPENAI_CHAT -> {
-                input = n(u, "prompt_tokens"); output = n(u, "completion_tokens");
-                cache = n(o(u, "prompt_tokens_details"), "cached_tokens");
+                // Native totals and standard details win, including an explicit zero.
+                input = Json.has(u, "prompt_tokens") ? n(u, "prompt_tokens")
+                        : n(u, "prompt_cache_hit_tokens") + n(u, "prompt_cache_miss_tokens");
+                output = n(u, "completion_tokens");
+                cache = Json.has(o(u, "prompt_tokens_details"), "cached_tokens")
+                        ? n(o(u, "prompt_tokens_details"), "cached_tokens") : n(u, "prompt_cache_hit_tokens");
                 write = n(o(u, "prompt_tokens_details"), "cached_creation_tokens");
                 if (write == 0) write = n(o(u, "prompt_tokens_details"), "cache_write_tokens");
                 thought = n(o(u, "completion_tokens_details"), "reasoning_tokens");
@@ -60,7 +64,8 @@ public record Usage(long inputTokens, long outputTokens, long totalTokens, long 
         for (var entry : later.entrySet()) {
             JsonElement value = entry.getValue();
             if (value.isJsonObject()) result.add(entry.getKey(), mergeObjects(o(result, entry.getKey()), value.getAsJsonObject()));
-            else if (!value.isJsonNull() && !(value.isJsonPrimitive()
+            // Retain a newly reported zero: its presence can take precedence over provider fallback fields.
+            else if (!value.isJsonNull() && !(Json.has(result, entry.getKey()) && value.isJsonPrimitive()
                     && value.getAsJsonPrimitive().isNumber() && value.getAsDouble() == 0))
                 result.add(entry.getKey(), value.deepCopy());
         }

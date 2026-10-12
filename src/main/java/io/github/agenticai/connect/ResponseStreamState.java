@@ -201,7 +201,13 @@ public final class ResponseStreamState {
         switch (type) {
             case "response.created", "response.in_progress" -> out.add(Delta.text("role", 0, ""));
             case "response.output_text.delta" -> out.add(Delta.text("text", 0, Json.s(event, "delta")));
-            case "response.reasoning_summary_text.delta", "response.reasoning_text.delta" -> out.add(Delta.text("reasoning", 0, Json.s(event, "delta")));
+            case "response.reasoning_summary_text.delta" -> {
+                // Work deduplicates this warning across summary fragments without growing stream state.
+                work.warn("reasoning_summary_not_replayable", "delta",
+                        "Reasoning summaries are mapped for display only; retain original history rather than replaying them as complete reasoning_content");
+                out.add(Delta.text("reasoning", 0, Json.s(event, "delta")));
+            }
+            case "response.reasoning_text.delta" -> out.add(Delta.text("reasoning", 0, Json.s(event, "delta")));
             case "response.refusal.delta" -> { out.add(Delta.text("text", 0, Json.s(event, "delta"))); work.warn("refusal_as_text", "delta", "拒绝内容以文本传递"); }
             case "response.output_item.added" -> {
                 JsonObject item = Json.o(event, "item");

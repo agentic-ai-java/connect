@@ -76,7 +76,9 @@ class StreamTest {
                     JsonObject tool = Json.o(Json.a(Json.o(Json.o(Json.a(last, "candidates").get(0)), "content"), "parts").get(0));
                     assertEquals("Paris", Json.s(Json.o(Json.o(tool, "functionCall"), "args"), "city"));
                 }
-                assertTrue(state.diagnostics().isEmpty(), state.diagnostics().toString());
+                List<String> expectedDiagnostics = from == Format.OPENAI_RESPONSES
+                        ? List.of("reasoning_summary_not_replayable") : List.of();
+                assertEquals(expectedDiagnostics, state.diagnostics().stream().map(Diagnostic::code).toList());
             }));
         }
         return tests.stream();

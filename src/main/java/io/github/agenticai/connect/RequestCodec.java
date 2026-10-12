@@ -12,7 +12,7 @@ final class RequestCodec {
     private RequestCodec() {}
     private static final Set<String> CHAT_FIELDS = Set.of("model", "messages", "stream", "stream_options", "max_tokens",
             "max_completion_tokens", "temperature", "top_p", "top_k", "stop", "tools", "tool_choice", "functions",
-            "function_call", "parallel_tool_calls", "response_format", "reasoning_effort", "reasoning", "n",
+            "function_call", "parallel_tool_calls", "response_format", "reasoning_effort", "reasoning", "thinking", "n",
             "web_search_options", "user", "metadata", "seed", "presence_penalty", "frequency_penalty", "logprobs",
             "top_logprobs", "logit_bias", "store", "service_tier");
     private static final Set<String> RESPONSES_FIELDS = Set.of("model", "input", "instructions", "stream", "max_output_tokens",
@@ -24,15 +24,8 @@ final class RequestCodec {
             "generationConfig", "tools", "toolConfig", "safetySettings", "cachedContent");
     static JsonObject convert(Format source, Format target, JsonObject input, Work w) {
         w.requestModel = w.model(input);
-        Reasoning.Intent intent = Reasoning.read(source, input);
-        if (w.ctx.reasoning != null) {
-            if (intent != null && !intent.equals(w.ctx.reasoning)) w.warn("reasoning_overridden", "reasoning", "上下文推理设置覆盖请求设置");
-            intent = w.ctx.reasoning;
-        }
-        w.ctx.reasoning = intent;
         JsonObject chat = toChat(source, input, w);
         JsonObject output = fromChat(target, chat, w);
-        Reasoning.render(intent, target, output, w);
         return output;
     }
     private static JsonObject base(JsonObject input, Work w) {
@@ -69,28 +62,7 @@ final class RequestCodec {
                 JsonElement raw = input.get("input");
                 if (raw.isJsonPrimitive()) messages.add(Json.obj("role", "user", "content", raw));
                 else if (!raw.isJsonArray()) throw new ConversionException("Responses input 必须是字符串或数组");
-                else for (JsonElement element : raw.getAsJsonArray()) {
-                    JsonObject item = Json.o(element);
-                    String type = Json.s(item, "type");
-                    if (type.isEmpty() || type.equals("message")) {
-                        String role = Json.s(item, "role"); if (role.isEmpty()) role = "user";
-                        JsonElement content = item.get("content");
-                        messages.add(Json.obj("role", role, "content", content != null && content.isJsonPrimitive()
-                                ? content : ContentCodec.toChat(source, content, w)));
-                    } else if (type.equals("function_call") || type.equals("custom_tool_call")) {
-                        String name = ToolCodec.encodeName(Json.s(item, "name"), Json.s(item, "namespace"), w.ctx);
-                        String arguments = type.equals("custom_tool_call") ? Json.stringify(Json.obj("input", Json.s(item, "input"))) : Json.s(item, "arguments");
-                        addCallMessage(messages, Json.s(item, "call_id"), name, arguments, null, w);
-                    } else if (type.equals("function_call_output") || type.equals("custom_tool_call_output")) {
-                        messages.add(Json.obj("role", "tool", "tool_call_id", Json.s(item, "call_id"),
-                                "content", item.has("output") ? item.get("output") : new com.google.gson.JsonPrimitive("")));
-                    } else if (type.equals("reasoning")) {
-                        StringBuilder reasoning = new StringBuilder();
-                        for (JsonElement summary : Json.a(item, "summary")) reasoning.append(Json.s(Json.o(summary), "text"));
-                        if (reasoning.length() > 0) messages.add(Json.obj("role", "assistant", "content", "", "reasoning_content", reasoning.toString()));
-                        if (item.has("encrypted_content")) w.warn("encrypted_reasoning_omitted", "input.encrypted_content", "目标协议无法使用加密推理历史");
-                    } else w.loss("responses_input_item_omitted", "input", "不能表达 Responses 输入项：" + type);
-                }
+                else RequestHistory.responses(raw.getAsJsonArray(), messages, w);
                 Json.rename(input, "max_output_tokens", out, "max_completion_tokens");
                 Json.copy(input, out, "parallel_tool_calls");
                 if (input.has("tool_choice")) {
@@ -138,13 +110,14 @@ final class RequestCodec {
                             if (Json.b(p, "is_error")) w.warn("tool_result_error_flag_omitted", "messages.content.is_error", "目标工具结果没有 is_error 标记");
                         }
                     }
+                    // Tool results must remain contiguous before any ordinary user content.
+                    for (JsonElement result : results) messages.add(result);
                     if (content != null && content.isJsonPrimitive()) messages.add(Json.obj("role", role, "content", content));
                     else if (!normal.isEmpty() || !calls.isEmpty()) {
                         JsonObject message = Json.obj("role", role, "content", normal.isEmpty() ? null : normal);
                         if (!calls.isEmpty()) message.add("tool_calls", calls);
                         messages.add(message);
                     }
-                    for (JsonElement result : results) messages.add(result);
                 }
                 Json.copy(input, out, "max_tokens"); Json.rename(input, "stop_sequences", out, "stop");
                 if (input.has("tool_choice")) out.add("tool_choice", claudeChoiceToChat(Json.o(input, "tool_choice"), w));
@@ -213,10 +186,6 @@ final class RequestCodec {
     static JsonObject call(String id, String name, String arguments) {
         return Json.obj("id", id, "type", "function", "function", Json.obj("name", name, "arguments", arguments));
     }
-    private static void addCallMessage(JsonArray messages, String id, String name, String args, JsonElement content, Work w) {
-        messages.add(Json.obj("role", "assistant", "content", content, "tool_calls", Json.arr(call(id, name, args))));
-        w.ctx.callNames.put(id, name);
-    }
     static JsonElement claudeChoiceToChat(JsonObject c, Work w) {
         if (Json.b(c, "disable_parallel_tool_use")) w.warn("parallel_tool_limit_approximated", "tool_choice", "禁用并行工具的控制由目标协议近似处理");
         return switch (Json.s(c, "type")) {
@@ -252,7 +221,7 @@ final class RequestCodec {
         }
         for (JsonElement element : messages) {
             JsonObject message = Json.o(element);
-            String role = Json.s(message, "role"); JsonElement content = message.get("content");
+            String role = Json.s(message, "role"); JsonElement content = RequestHistory.targetContent(message, target, w);
             if (role.equals("system") || role.equals("developer")) {
                 if (target == Format.OPENAI_RESPONSES) system.add(new com.google.gson.JsonPrimitive(ContentCodec.text(content)));
                 else for (JsonElement part : Json.a(ContentCodec.fromChat(target, content != null && content.isJsonPrimitive()

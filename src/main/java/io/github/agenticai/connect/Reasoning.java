@@ -23,7 +23,7 @@ public final class Reasoning {
             if (!List.of("", "enabled", "disabled", "adaptive", "between_tools").contains(mode))
                 throw new ConversionException("无效 thinking mode：" + mode);
             effort = effort == null ? "" : effort.toLowerCase(Locale.ROOT);
-            if (!effort.isEmpty() && !List.of("none", "minimal", "low", "medium", "high", "xhigh", "max").contains(effort))
+            if (!effort.isEmpty() && !List.of("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra").contains(effort))
                 throw new ConversionException("无效 reasoning effort：" + effort);
             if (budget != null && budget < -1) throw new ConversionException("thinking budget 不能小于 -1");
         }
@@ -108,6 +108,7 @@ public final class Reasoning {
                 if (has(config, "max_tokens")) budget = Math.toIntExact(n(config, "max_tokens"));
                 if (has(config, "enabled")) mode = b(config, "enabled") ? "enabled" : "disabled";
                 if (has(config, "exclude")) thoughts = !b(config, "exclude");
+                if (has(o(req, "thinking"), "type")) mode = s(o(req, "thinking"), "type");
             }
             case OPENAI_RESPONSES -> {
                 config = o(req, "reasoning"); effort = s(config, "effort");
@@ -143,6 +144,10 @@ public final class Reasoning {
     static void render(Intent intent, Format target, JsonObject req, Work w) {
         if (intent == null || intent.empty()) return;
         String effort = intent.effort();
+        if (effort.equals("ultra")) {
+            effort = "max";
+            w.warn("reasoning_effort_mapped", "reasoning", "The provider-specific ultra effort was normalized to max");
+        }
         if (effort.isEmpty() && intent.budget() != null) effort = effortFromBudget(intent.budget());
         if (intent.disabled()) effort = "none";
         switch (target) {

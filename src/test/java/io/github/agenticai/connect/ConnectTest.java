@@ -30,7 +30,7 @@ class ConnectTest {
     }
     private static ConversionContext context() {
         Options options = new Options(); options.claudeDefaultMaxTokens = model -> 4096;
-        ConversionContext context = new ConversionContext(options); context.upstreamModel = "upstream-model"; return context;
+        return new ConversionContext(options);
     }
     @TestFactory Stream<DynamicTest> requestSnapshots() {
         return Stream.of(new Format[] {Format.OPENAI_CHAT, Format.CLAUDE},
@@ -60,7 +60,9 @@ class ConnectTest {
                     """));
         for (Format from : Format.values()) for (Format to : Format.values()) tests.add(DynamicTest.dynamicTest(from + " → " + to, () -> {
             JsonObject input = inputs.get(from).deepCopy(), before = input.deepCopy();
-            ConversionResult result = kit.convertRequest(from, to, input, context());
+            ConversionContext ctx = context();
+            if (from == Format.GEMINI) ctx.upstreamModel = "upstream-model";
+            ConversionResult result = kit.convertRequest(from, to, input, ctx);
             assertEquals(before, input);
             assertEquals(from, result.from()); assertEquals(to, result.to());
             String key = switch (to) { case OPENAI_CHAT, CLAUDE -> "messages"; case OPENAI_RESPONSES -> "input"; case GEMINI -> "contents"; };
@@ -176,7 +178,8 @@ class ConnectTest {
         ConversionResult converted = kit.convertRequest(Format.OPENAI_RESPONSES, Format.OPENAI_CHAT, request, ctx);
         JsonArray messages = Json.a(converted.value(), "messages");
         JsonObject first = Json.o(Json.a(Json.o(messages.get(0)), "tool_calls").get(0));
-        JsonObject second = Json.o(Json.a(Json.o(messages.get(1)), "tool_calls").get(0));
+        assertEquals(1, messages.size());
+        JsonObject second = Json.o(Json.a(Json.o(messages.get(0)), "tool_calls").get(1));
         assertTrue(Json.s(Json.o(first, "function"), "name").startsWith("rk_"));
         assertEquals("{\"input\":\"print(1)\"}", Json.s(Json.o(first, "function"), "arguments"));
         JsonObject response = Json.obj("id", "c", "model", "test", "choices", Json.arr(Json.obj("index", 0, "message",

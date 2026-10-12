@@ -100,4 +100,33 @@ class BoundaryTest {
         assertEquals("custom_tool_call", Json.s(Json.o(output.get(0)), "type"));
         assertEquals("print(1)", Json.s(Json.o(output.get(0)), "input"));
     }
+    @Test void fileHistoryAcrossTargetsPreservesDataAndRejectsOpaqueReferences() {
+        JsonObject request = chat();
+        JsonObject file = Json.obj("file_data", "data:text/plain;base64,aGVsbG8=", "filename", "note.txt");
+        Json.o(Json.a(request, "messages").get(0)).add("content", Json.arr(Json.obj("type", "file", "file", file)));
+        file = Json.o(Json.o(Json.a(Json.o(Json.a(request, "messages").get(0)), "content").get(0)), "file");
+        assertTrue(kit.convertRequest(Format.OPENAI_CHAT, Format.CLAUDE, request, null).json().contains("note.txt"));
+        assertTrue(kit.convertRequest(Format.OPENAI_CHAT, Format.GEMINI, request, null).json().contains("text/plain"));
+        file.remove("file_data"); Json.put(file, "file_url", "gs://bucket/note.pdf"); Json.put(file, "mime_type", "application/pdf");
+        assertTrue(kit.convertRequest(Format.OPENAI_CHAT, Format.GEMINI, request, null).json().contains("gs://bucket/note.pdf"));
+        file.remove("file_url"); Json.put(file, "file_id", "opaque");
+        assertTrue(kit.convertRequest(Format.OPENAI_CHAT, Format.CLAUDE, request, null).diagnostics().stream()
+                .anyMatch(d -> d.code().equals("file_id_unsupported")));
+        file.remove("file_id"); Json.put(file, "file_data", "data:application/octet-stream;base64,aA==");
+        assertTrue(kit.convertRequest(Format.OPENAI_CHAT, Format.CLAUDE, request, null).diagnostics().stream()
+                .anyMatch(d -> d.code().equals("unsupported_media_type")));
+    }
+    @Test void geminiInlineAndUriHistoryRetainsMedia() {
+        JsonObject input = Json.object("""
+                {"model":"x","contents":[{"role":"user","parts":[
+                {"inline_data":{"mime_type":"image/png","data":"aA=="}},
+                {"inlineData":{"mimeType":"text/plain","data":"aA=="}},
+                {"file_data":{"file_uri":"gs://bucket/note.pdf","mimeType":"application/pdf"}}]}]}
+                """);
+        ConversionResult result = kit.convertRequest(Format.GEMINI, Format.OPENAI_CHAT, input, null);
+        JsonArray parts = Json.a(Json.o(Json.a(result.value(), "messages").get(0)), "content");
+        assertEquals(3, parts.size()); assertEquals("image_url", Json.s(Json.o(parts.get(0)), "type"));
+        assertEquals("file", Json.s(Json.o(parts.get(1)), "type"));
+        assertEquals("gs://bucket/note.pdf", Json.s(Json.o(Json.o(parts.get(2)), "file"), "file_url"));
+    }
 }

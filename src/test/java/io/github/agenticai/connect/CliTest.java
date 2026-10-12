@@ -2,6 +2,7 @@ package io.github.agenticai.connect;
 
 import org.junit.jupiter.api.Test;
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -14,8 +15,12 @@ class CliTest {
     private record Result(int exit, String out, String err) {}
     private static Result run(String input, String... args) throws IOException, InterruptedException {
         String classpath = System.getProperty("java.class.path");
-        List<String> command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "-Xverify:all", "-cp", classpath, ConnectCli.class.getName()));
+        List<String> command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString()));
+        // Instrument the real CLI subprocess as well, without introducing a runtime dependency.
+        ManagementFactory.getRuntimeMXBean().getInputArguments().stream()
+                .filter(arg -> arg.startsWith("-javaagent:") && arg.contains("org.jacoco"))
+                .forEach(command::add);
+        command.addAll(List.of("-Xverify:all", "-cp", classpath, ConnectCli.class.getName()));
         command.addAll(List.of(args));
         Process process = new ProcessBuilder(command).start();
         process.getOutputStream().write(input.getBytes(StandardCharsets.UTF_8)); process.getOutputStream().close();
