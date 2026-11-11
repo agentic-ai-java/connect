@@ -25,7 +25,7 @@ public final class FinishReasons {
     static String fromGemini(String reason) {
         return switch (reason) {
             case "STOP" -> "stop";
-            case "MAX_TOKENS" -> "length";
+            case "MAX_TOKENS", "CONTINUATION" -> "length";
             case "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY" -> "content_filter";
             default -> reason.toLowerCase(Locale.ROOT);
         };

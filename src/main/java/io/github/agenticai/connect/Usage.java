@@ -24,13 +24,13 @@ public record Usage(long inputTokens, long outputTokens, long totalTokens, long 
                 output = n(u, "completion_tokens");
                 cache = Json.has(o(u, "prompt_tokens_details"), "cached_tokens")
                         ? n(o(u, "prompt_tokens_details"), "cached_tokens") : n(u, "prompt_cache_hit_tokens");
-                write = n(o(u, "prompt_tokens_details"), "cached_creation_tokens");
-                if (write == 0) write = n(o(u, "prompt_tokens_details"), "cache_write_tokens");
+                write = cacheWrites(o(u, "prompt_tokens_details"));
                 thought = n(o(u, "completion_tokens_details"), "reasoning_tokens");
             }
             case OPENAI_RESPONSES -> {
                 input = n(u, "input_tokens"); output = n(u, "output_tokens");
                 cache = n(o(u, "input_tokens_details"), "cached_tokens");
+                write = cacheWrites(o(u, "input_tokens_details"));
                 thought = n(o(u, "output_tokens_details"), "reasoning_tokens");
             }
             case CLAUDE -> {
@@ -51,6 +51,29 @@ public record Usage(long inputTokens, long outputTokens, long totalTokens, long 
         long total = n(u, format == Format.GEMINI ? "totalTokenCount" : "total_tokens");
         if (total == 0) total = input + output;
         return new Usage(input, output, total, cache, write, five, hour, thought, format, u);
+    }
+    private static long cacheWrites(JsonObject details) {
+        // Aliases describe the same writes; never add them or count them again as input.
+        return Math.max(0, Math.max(n(details, "cache_creation_input_tokens"),
+                Math.max(n(details, "cache_write_tokens"), n(details, "cached_creation_tokens"))));
+    }
+    private JsonObject openAIInputDetails() {
+        return o(raw, source == Format.OPENAI_CHAT ? "prompt_tokens_details" : "input_tokens_details");
+    }
+    /** Reported OpenAI 30-minute writes, bounded by the normalized write total. */
+    public long cacheWrite30mTokens() { return cacheWriteLifetime("ttl_30m_tokens"); }
+    /** Reported OpenAI 12-hour writes, kept separate from Claude's cache lifetimes. */
+    public long cacheWrite12hTokens() { return cacheWriteLifetime("ttl_12h_tokens"); }
+    private long cacheWriteLifetime(String field) {
+        if (source != Format.OPENAI_CHAT && source != Format.OPENAI_RESPONSES) return 0;
+        return Math.min(cacheWriteTokens, Math.max(0, n(o(openAIInputDetails(), "cache_write_tokens_details"), field)));
+    }
+    private JsonObject convertedInputDetails(boolean chat) {
+        JsonObject details = source == Format.OPENAI_CHAT || source == Format.OPENAI_RESPONSES
+                ? openAIInputDetails().deepCopy() : obj();
+        details.addProperty("cached_tokens", cachedTokens);
+        if (chat || cacheWriteTokens != 0) details.addProperty("cache_write_tokens", cacheWriteTokens);
+        return details;
     }
     /** Merges native fields so output-only Claude updates preserve input and cache counts. */
     public Usage mergeNonZero(Usage later) {
@@ -75,10 +98,10 @@ public record Usage(long inputTokens, long outputTokens, long totalTokens, long 
         if (target == source) return raw();
         return switch (target) {
             case OPENAI_CHAT -> obj("prompt_tokens", inputTokens, "completion_tokens", outputTokens,
-                    "total_tokens", totalTokens, "prompt_tokens_details", obj("cached_tokens", cachedTokens,
-                    "cache_write_tokens", cacheWriteTokens), "completion_tokens_details", obj("reasoning_tokens", reasoningTokens));
+                    "total_tokens", totalTokens, "prompt_tokens_details", convertedInputDetails(true),
+                    "completion_tokens_details", obj("reasoning_tokens", reasoningTokens));
             case OPENAI_RESPONSES -> obj("input_tokens", inputTokens, "output_tokens", outputTokens,
-                    "total_tokens", totalTokens, "input_tokens_details", obj("cached_tokens", cachedTokens),
+                    "total_tokens", totalTokens, "input_tokens_details", convertedInputDetails(false),
                     "output_tokens_details", obj("reasoning_tokens", reasoningTokens));
             case CLAUDE -> obj("input_tokens", Math.max(0, inputTokens - cachedTokens - cacheWriteTokens),
                     "output_tokens", outputTokens, "cache_read_input_tokens", cachedTokens,

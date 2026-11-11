@@ -69,8 +69,10 @@ final class RequestHistory {
                 Json.a(assistant, "tool_calls").add(RequestCodec.call(Json.s(item, "call_id"), name, args));
                 w.ctx.callNames.put(Json.s(item, "call_id"), name);
             } else if (type.equals("function_call_output") || type.equals("custom_tool_call_output")) {
+                JsonElement output = item.get("output");
                 messages.add(Json.obj("role", "tool", "tool_call_id", Json.s(item, "call_id"),
-                        "content", item.has("output") ? item.get("output").deepCopy() : new com.google.gson.JsonPrimitive("")));
+                        "content", output == null ? new com.google.gson.JsonPrimitive("") : output.isJsonArray()
+                                ? ContentCodec.toChat(Format.OPENAI_RESPONSES, output, w) : output.deepCopy()));
                 assistant = null; hasMessage = false;
             } else if (type.equals("reasoning")) {
                 if (hasMessage) { assistant = null; hasMessage = false; }

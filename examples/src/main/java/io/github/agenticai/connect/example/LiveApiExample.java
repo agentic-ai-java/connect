@@ -129,7 +129,7 @@ public final class LiveApiExample {
 
     private static JsonObject chat(String model, boolean tool) {
         JsonObject request = Json.object("""
-                {"messages":[{"role":"user","content":"Reply with exactly CONNECT_OK and nothing else."}],
+                {"messages":[{"role":"user","content":"Respond with exactly CONNECT_OK and nothing else."}],
                  "max_completion_tokens":512}
                 """);
         request.addProperty("model", model);
@@ -169,13 +169,13 @@ public final class LiveApiExample {
     private void alternateRequest(Endpoint endpoint) throws Exception {
         ConversionContext context = context(endpoint);
         JsonObject source = Json.object("""
-                {"max_tokens":512,"messages":[{"role":"user","content":"Reply with exactly CONNECT_OK and nothing else."}]}
+                {"max_tokens":512,"messages":[{"role":"user","content":"Respond with exactly CONNECT_OK and nothing else."}]}
                 """);
         source.addProperty("model", endpoint.model());
         Format from = Format.CLAUDE;
         if (endpoint.format() == Format.CLAUDE) {
             from = Format.OPENAI_RESPONSES;
-            source = Json.object("{\"input\":\"Reply with exactly CONNECT_OK and nothing else.\",\"max_output_tokens\":512}");
+            source = Json.object("{\"input\":\"Respond with exactly CONNECT_OK and nothing else.\",\"max_output_tokens\":512}");
             source.addProperty("model", endpoint.model());
         }
         ConversionResult result = CONNECT.convertRequest(from, endpoint.format(), source, context);

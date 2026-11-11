@@ -226,7 +226,7 @@ java -cp "target/classes:$GSON_JAR" io.github.agenticai.connect.ConnectCli strea
 
 ### 设计参考
 
-协议与供应商分层、最终模型映射参考了 Apache ShenYu 提交 `a318c56b519588a69d9b2076f3d9b8686f28d83f` 的 `OpenAiCompatible`、`OpenAi`、`OpenAiChat`，以及 New API 提交 `633b4c5b190dc1af99a2814391354d86948e7943` 的 `relaykit` 和 DeepSeek channel adapter。本实现借鉴设计，不复制 New API 的 AGPL 源码。HTTP、鉴权、端点选择、重试和计费仍由宿主负责。供应商规则依据 [DeepSeek 思考模式指南](https://api-docs.deepseek.com/guides/thinking_mode/) 与 [Chat API 定义](https://api-docs.deepseek.com/api/create-chat-completion/) 核对；供应商后续调整需要重新评估兼容性。
+协议与供应商分层、最终模型映射参考了 Apache ShenYu 提交 `a318c56b519588a69d9b2076f3d9b8686f28d83f` 的 `OpenAiCompatible`、`OpenAi`、`OpenAiChat`。HTTP、鉴权、端点选择、重试和计费仍由宿主负责。供应商规则依据 [DeepSeek 思考模式指南](https://api-docs.deepseek.com/guides/thinking_mode/) 与 [Chat API 定义](https://api-docs.deepseek.com/api/create-chat-completion/) 核对；供应商后续调整需要重新评估兼容性。
 
 ## 许可证
 

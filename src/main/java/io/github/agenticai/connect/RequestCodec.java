@@ -14,14 +14,16 @@ final class RequestCodec {
             "max_completion_tokens", "temperature", "top_p", "top_k", "stop", "tools", "tool_choice", "functions",
             "function_call", "parallel_tool_calls", "response_format", "reasoning_effort", "reasoning", "thinking", "n",
             "web_search_options", "user", "metadata", "seed", "presence_penalty", "frequency_penalty", "logprobs",
-            "top_logprobs", "logit_bias", "store", "service_tier");
+            "top_logprobs", "logit_bias", "store", "service_tier", "prompt_cache_key", "prompt_cache_options",
+            "prompt_cache_retention", "imageConfig", "extra_body");
     private static final Set<String> RESPONSES_FIELDS = Set.of("model", "input", "instructions", "stream", "max_output_tokens",
             "temperature", "top_p", "tools", "tool_choice", "parallel_tool_calls", "text", "reasoning", "user", "metadata",
-            "store", "service_tier", "previous_response_id", "conversation", "background", "truncation", "include");
+            "store", "service_tier", "previous_response_id", "conversation", "background", "truncation", "include",
+            "prompt_cache_key", "prompt_cache_options", "prompt_cache_retention");
     private static final Set<String> CLAUDE_FIELDS = Set.of("model", "system", "messages", "max_tokens", "stream",
             "temperature", "top_p", "top_k", "tools", "tool_choice", "stop_sequences", "thinking", "output_config", "metadata");
     private static final Set<String> GEMINI_FIELDS = Set.of("model", "contents", "systemInstruction", "system_instruction",
-            "generationConfig", "tools", "toolConfig", "safetySettings", "cachedContent");
+            "generationConfig", "tools", "toolConfig", "safetySettings", "cachedContent", "continuationToken", "continuation_token");
     static JsonObject convert(Format source, Format target, JsonObject input, Work w) {
         w.requestModel = w.model(input);
         JsonObject chat = toChat(source, input, w);
@@ -65,6 +67,7 @@ final class RequestCodec {
                 else RequestHistory.responses(raw.getAsJsonArray(), messages, w);
                 Json.rename(input, "max_output_tokens", out, "max_completion_tokens");
                 Json.copy(input, out, "parallel_tool_calls");
+                Json.copy(input, out, "prompt_cache_key", "prompt_cache_options", "prompt_cache_retention");
                 if (input.has("tool_choice")) {
                     JsonElement choice = input.get("tool_choice");
                     if (choice.isJsonObject()) {
@@ -156,6 +159,13 @@ final class RequestCodec {
                     }
                 }
                 JsonObject config = Json.o(input, "generationConfig");
+                Json.copy(config, out, "imageConfig");
+                for (String field : List.of("continuationToken", "continuation_token"))
+                    if (Json.has(input, field)) w.loss("continuation_token_omitted", field,
+                            "A Gemini continuation token cannot resume a conversation in another protocol");
+                for (String field : List.of("mediaProcessing", "media_processing"))
+                    if (Json.has(config, field)) w.loss("media_processing_omitted", "generationConfig." + field,
+                            "The target protocol cannot express Gemini media processing controls");
                 Json.rename(config, "maxOutputTokens", out, "max_tokens"); Json.rename(config, "topP", out, "top_p");
                 Json.rename(config, "topK", out, "top_k"); Json.copy(config, out, "temperature");
                 Json.rename(config, "stopSequences", out, "stop");
@@ -204,6 +214,13 @@ final class RequestCodec {
             return out;
         }
         JsonObject out = base(chat, w);
+        for (String field : List.of("prompt_cache_key", "prompt_cache_options", "prompt_cache_retention")) {
+            if (!Json.has(chat, field)) continue;
+            if (target == Format.OPENAI_RESPONSES) Json.copy(chat, out, field);
+            else w.warn("prompt_cache_control_omitted", field, "The target protocol cannot express OpenAI prompt cache controls");
+        }
+        if (target != Format.GEMINI) for (String field : List.of("imageConfig", "extra_body"))
+            if (Json.has(chat, field)) w.warn("unsupported_request_field", field, "The target protocol cannot express Gemini request extensions");
         JsonArray messages = Json.a(chat, "messages"), targetMessages = new JsonArray();
         JsonArray system = new JsonArray();
         long max = Json.has(chat, "max_completion_tokens") ? Json.n(chat, "max_completion_tokens") : Json.n(chat, "max_tokens");
@@ -237,7 +254,9 @@ final class RequestCodec {
                     }
                     ConversionContext.ToolEncoding enc = w.ctx.toolEncodings.get(w.ctx.callNames.get(id));
                     targetMessages.add(Json.obj("type", enc != null && enc.type().equals("custom") ? "custom_tool_call_output" : "function_call_output",
-                            "call_id", id, "output", content == null ? "" : content.isJsonPrimitive() ? content.getAsString() : Json.stringify(content)));
+                            "call_id", id, "output", content == null ? new com.google.gson.JsonPrimitive("")
+                                    : content.isJsonArray() ? ContentCodec.fromChat(target, content, "user", w)
+                                    : new com.google.gson.JsonPrimitive(content.isJsonPrimitive() ? content.getAsString() : Json.stringify(content))));
                 } else {
                     targetMessages.add(Json.obj("role", role, "content", content == null || content.isJsonNull() ? new com.google.gson.JsonPrimitive("")
                             : content.isJsonPrimitive() ? content : ContentCodec.fromChat(target, content, role, w)));
@@ -329,7 +348,8 @@ final class RequestCodec {
                 Json.put(out, "max_tokens", max);
                 if (!system.isEmpty()) out.add("system", system);
                 out.add("messages", targetMessages);
-                if (chat.has("stop")) out.add("stop_sequences", asArray(chat.get("stop")));
+                JsonArray stops = stopSequences(chat.get("stop"), w);
+                if (!stops.isEmpty()) out.add("stop_sequences", stops);
                 if (chat.has("tool_choice")) out.add("tool_choice", choiceToClaude(chat.get("tool_choice"), chat));
                 JsonObject format = Json.o(chat, "response_format");
                 if (Json.s(format, "type").equals("json_schema"))
@@ -342,9 +362,12 @@ final class RequestCodec {
                 if (!system.isEmpty()) out.add("systemInstruction", Json.obj("parts", system));
                 out.add("contents", targetMessages);
                 JsonObject config = Json.obj();
+                JsonObject imageConfig = geminiImageConfig(chat, w);
+                if (!imageConfig.isEmpty()) config.add("imageConfig", imageConfig);
                 Json.copy(chat, config, "temperature"); Json.rename(chat, "top_p", config, "topP"); Json.rename(chat, "top_k", config, "topK");
                 if (hasMax) Json.put(config, "maxOutputTokens", max);
-                if (chat.has("stop")) config.add("stopSequences", asArray(chat.get("stop")));
+                JsonArray stops = stopSequences(chat.get("stop"), w);
+                if (!stops.isEmpty()) config.add("stopSequences", stops);
                 if (chat.has("n")) Json.rename(chat, "n", config, "candidateCount");
                 JsonObject format = Json.o(chat, "response_format");
                 if (Json.s(format, "type").equals("json_schema")) {
@@ -388,7 +411,32 @@ final class RequestCodec {
         else Json.put(result, "arguments", Json.s(f, "arguments"));
         return result;
     }
-    private static JsonArray asArray(JsonElement value) { return value.isJsonArray() ? value.getAsJsonArray().deepCopy() : Json.arr(value.deepCopy()); }
+    /** Invalid stop values are omitted with a diagnostic instead of reaching a strict upstream. */
+    private static JsonArray stopSequences(JsonElement value, Work w) {
+        JsonArray result = new JsonArray();
+        if (value == null || value.isJsonNull()) return result;
+        for (JsonElement item : value.isJsonArray() ? value.getAsJsonArray() : Json.arr(value)) {
+            if (item.isJsonPrimitive() && item.getAsJsonPrimitive().isString()) result.add(item.deepCopy());
+            else w.warn("invalid_stop_sequence_omitted", "stop", "Stop sequences must be strings; an invalid value was omitted");
+        }
+        return result;
+    }
+    private static JsonObject geminiImageConfig(JsonObject chat, Work w) {
+        JsonObject image = Json.o(chat, "imageConfig").deepCopy();
+        JsonObject extra = Json.o(chat, "extra_body"), google = Json.o(extra, "google");
+        JsonObject override = Json.o(google, "image_config").deepCopy();
+        // The Google extension wins only when it contains an image configuration.
+        if (!override.isEmpty()) {
+            Json.rename(override, "image_size", override, "imageSize"); override.remove("image_size");
+            Json.rename(override, "aspect_ratio", override, "aspectRatio"); override.remove("aspect_ratio");
+            image = override;
+        }
+        for (String key : extra.keySet()) if (!key.equals("google"))
+            w.warn("unsupported_request_field", "extra_body." + key, "The Gemini conversion does not map this extension");
+        for (String key : google.keySet()) if (!key.equals("image_config"))
+            w.warn("unsupported_request_field", "extra_body.google." + key, "The Gemini conversion does not map this extension");
+        return image;
+    }
     private static JsonObject choiceToClaude(JsonElement choice, JsonObject chat) {
         JsonObject result;
         if (choice.isJsonPrimitive()) result = Json.obj("type", switch (choice.getAsString()) { case "required" -> "any"; case "none" -> "none"; default -> "auto"; });

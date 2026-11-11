@@ -205,14 +205,18 @@ public final class Reasoning {
             }
             case GEMINI -> {
                 JsonObject config = o(req, "generationConfig"), thinking = obj();
-                String model = w.model(req);
-                if (model.contains("gemini-3")) {
-                    if (effort.isEmpty()) effort = intent.disabled() ? "minimal" : "high";
-                    if (effort.equals("none") || effort.equals("minimal")) effort = model.contains("pro") ? "low" : "minimal";
+                String model = w.model(req).toLowerCase(Locale.ROOT);
+                boolean argon = model.contains("gemini-4-argon");
+                if (model.contains("gemini-3") || argon) {
+                    if (argon && !intent.disabled() && Integer.valueOf(-1).equals(intent.budget()) && intent.effort().isEmpty()) effort = "";
+                    if (effort.isEmpty()) effort = argon && !model.contains("cyber-permissive") ? "medium" : "high";
+                    if (effort.equals("none") || effort.equals("minimal")) effort = argon || model.contains("pro") ? "low" : "minimal";
                     if (effort.equals("max") || effort.equals("xhigh")) effort = "high";
-                    if (model.contains("pro") && effort.equals("medium")) effort = "high";
+                    if (!argon && model.contains("pro") && effort.equals("medium")) effort = "high";
                     put(thinking, "thinkingLevel", effort);
-                    if (intent.budget() != null) w.warn("gemini_budget_to_level", "generationConfig.thinkingConfig", "Gemini 3 使用 thinkingLevel");
+                    if (intent.budget() != null) w.warn("gemini_budget_to_level", "generationConfig.thinkingConfig", "Gemini 3/4 uses thinkingLevel instead of a token budget");
+                    if (argon && (intent.disabled() || !effort.equals(intent.effort()) && !intent.effort().isEmpty()))
+                        w.warn("gemini_effort_mapped", "generationConfig.thinkingConfig", "The requested effort was mapped to a supported Argon thinking level");
                 } else {
                     int budget = intent.disabled() ? 0 : intent.budget() != null ? intent.budget() : effort.isEmpty() ? -1 : budgetFromEffort(effort);
                     int limit = model.contains("pro") ? 32768 : 24576;

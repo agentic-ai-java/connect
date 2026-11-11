@@ -31,6 +31,7 @@ final class ResponseCodec {
                 int index = 0;
                 for (JsonElement candidate : Json.a(input, "candidates")) {
                     JsonObject c = Json.o(candidate), message = geminiMessage(c, w);
+                    diagnoseContinuation(c, w);
                     String finish = FinishReasons.fromGemini(Json.s(c, "finishReason"));
                     if (message.has("tool_calls") && finish.equals("stop")) finish = "tool_calls";
                     choices.add(Json.obj("index", c.has("index") ? Json.n(c, "index") : index++, "message", message, "finish_reason", finish));
@@ -91,6 +92,11 @@ final class ResponseCodec {
         out.add("choices", choices);
         out.add("usage", Usage.from(source, input).toJson(Format.OPENAI_CHAT));
         return out;
+    }
+    static void diagnoseContinuation(JsonObject candidate, Work w) {
+        if (Json.has(candidate, "continuationToken") || Json.has(candidate, "continuation_token"))
+            w.loss("continuation_token_omitted", "candidates.continuationToken",
+                    "The target protocol cannot replay a Gemini continuation token; retain the native response to resume");
     }
     static JsonObject claudeMessage(JsonObject input, Work w) {
         StringBuilder text = new StringBuilder(), reasoning = new StringBuilder();

@@ -172,6 +172,7 @@ public final class ResponseStreamState {
             case GEMINI -> {
                 for (JsonElement element : Json.a(event, "candidates")) {
                     JsonObject candidate = Json.o(element);
+                    ResponseCodec.diagnoseContinuation(candidate, work);
                     int index = Math.toIntExact(Json.n(candidate, "index"));
                     for (JsonElement part : Json.a(Json.o(candidate, "content"), "parts")) {
                         JsonObject p = Json.o(part);

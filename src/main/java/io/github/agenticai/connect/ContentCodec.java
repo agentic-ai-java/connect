@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.Locale;
 import java.util.Set;
 
 /** Uses Chat-shaped content as an internal bridge and diagnoses unsupported blocks. */
@@ -57,6 +58,9 @@ final class ContentCodec {
                     }
                 }
                 case GEMINI -> {
+                    for (String field : Set.of("mediaProcessing", "media_processing"))
+                        if (Json.has(p, field)) w.loss("media_processing_omitted", "parts." + field,
+                                "The target protocol cannot express Gemini media processing controls");
                     if (p.has("text")) {
                         JsonObject text = Json.obj("type", Json.b(p, "thought") ? "thinking" : "text", "text", Json.s(p, "text"));
                         Json.copy(p, text, "thoughtSignature"); result.add(text);
@@ -108,8 +112,12 @@ final class ContentCodec {
                 case "image_url" -> {
                     JsonElement imageUrl = p.get("image_url");
                     String url = imageUrl != null && imageUrl.isJsonPrimitive() ? imageUrl.getAsString() : Json.s(Json.o(imageUrl), "url");
-                    if (target == Format.OPENAI_RESPONSES) result.add(Json.obj("type", "input_image", "image_url", url));
-                    else {
+                    if (target == Format.OPENAI_RESPONSES) {
+                        String detail = Json.s(Json.o(imageUrl), "detail").trim().toLowerCase(Locale.ROOT);
+                        // Emit detail explicitly for strict Responses clients and preserve supported hints.
+                        if (!Set.of("auto", "low", "high", "original").contains(detail)) detail = "auto";
+                        result.add(Json.obj("type", "input_image", "image_url", url, "detail", detail));
+                    } else {
                         MediaResolver.MediaData data = w.resolve(url);
                         if (target == Format.CLAUDE) result.add(Json.obj("type", "image", "source",
                                 Json.obj("type", "base64", "media_type", data.mimeType(), "data", data.base64())));

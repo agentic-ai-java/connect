@@ -135,6 +135,8 @@ long outputTokens = result.usage().outputTokens();
 
 For Chat providers, an absent `prompt_tokens` falls back to `prompt_cache_hit_tokens + prompt_cache_miss_tokens`, and absent standard `cached_tokens` falls back to `prompt_cache_hit_tokens`. Standard fields take precedence even when explicitly zero; cache hits are not added twice. Raw provider fields remain available.
 
+For Chat and Responses, `cacheWriteTokens()` takes the nonnegative maximum of `cached_creation_tokens`, `cache_write_tokens`, and `cache_creation_input_tokens` in the input-token details. These aliases describe overlapping writes already included in input tokens. `cacheWrite30mTokens()` and `cacheWrite12hTokens()` expose the reported OpenAI lifetime subsets, each bounded by the write total; they do not replace Claude's `cacheWrite5mTokens()` and `cacheWrite1hTokens()`. Chat/Responses conversion retains input-token details, including cache lifetimes and modality breakdowns. Stream snapshots retain earlier positive values when later updates report zero. `raw()` remains a detached copy of the original provider usage.
+
 Reuse the request's `ConversionContext` when converting its response or stream so custom and namespace tools can be restored.
 
 ## Convert a stream
@@ -220,7 +222,23 @@ See the [Chinese guide](README.zh-CN.md) for the corresponding usage and compati
 
 ### Design references
 
-The protocol/provider separation and final model mapping were reviewed against Apache ShenYu's `OpenAiCompatible`, `OpenAi`, and `OpenAiChat` at commit `a318c56b519588a69d9b2076f3d9b8686f28d83f`, and New API's `relaykit` and DeepSeek channel adapter at commit `633b4c5b190dc1af99a2814391354d86948e7943`. This implementation borrows design concepts, not New API's AGPL source. HTTP, authentication, endpoint selection, retries, and billing remain host responsibilities. Provider rules are checked against the [DeepSeek thinking guide](https://api-docs.deepseek.com/guides/thinking_mode/) and [Chat API schema](https://api-docs.deepseek.com/api/create-chat-completion/); future provider changes require a new compatibility review.
+The protocol/provider separation and final model mapping were reviewed against Apache ShenYu's `OpenAiCompatible`, `OpenAi`, and `OpenAiChat` at commit `a318c56b519588a69d9b2076f3d9b8686f28d83f`. HTTP, authentication, endpoint selection, retries, and billing remain host responsibilities. Provider rules are checked against the [DeepSeek thinking guide](https://api-docs.deepseek.com/guides/thinking_mode/) and [Chat API schema](https://api-docs.deepseek.com/api/create-chat-completion/); future provider changes require a new compatibility review.
+
+### Protocol compatibility details
+
+| Feature | connect behavior |
+|---|---|
+| Responses image detail | Preserve `low`, `high`, `auto`, and `original`; normalize case/whitespace; default missing or unknown detail to `auto`. Claude tool-result media remains a structured Responses output array and can round-trip through Chat. |
+| Gemini image configuration | Move Chat `imageConfig` into `generationConfig.imageConfig`. A nonempty `extra_body.google.image_config` takes precedence; `image_size` and `aspect_ratio` become camelCase. Unsupported extra-body fields produce diagnostics. |
+| Non-string stop values | Claude/Gemini requests keep only string stop sequences, including empty strings. Invalid entries produce warnings, so `STRICT` can reject them. Null or empty lists are omitted. |
+| Cache-write lifetimes and aliases | Normalize cache-write aliases without double counting; retain Chat/Responses lifetime details in full responses and streams. Preserve `prompt_cache_key`, `prompt_cache_options`, and `prompt_cache_retention` between Chat and Responses; diagnose their omission for Claude/Gemini. |
+| Gemini Argon | Map reasoning to `thinkingLevel` for `gemini-4-argon*`, including its medium default and the cyber-permissive high default when thinking is requested without an effort. Map `CONTINUATION` to length/incomplete in responses and streams. Native requests retain continuation/media-processing fields; cross-protocol conversion diagnoses unsupported state. |
+
+Regression tests cover Gemini text alongside tool calls, adjacent assistant tool calls, tool argument number precision, JSON Schema property order, and empty reasoning summaries in stream item announcements.
+
+Independent image-generation and embedding endpoints, channel configuration, HTTP error masking, billing prices, search/fetch routing, and automatic model parameter rewriting require host or explicit provider-profile behavior beyond the generic conversion API. Gemini continuation tokens have no portable replay equivalent; hosts that resume generation must retain the native response. Same-format conversion continues to preserve native payloads rather than normalizing provider controls.
+
+Migration: replace the library directly; existing constructors and record components are unchanged. Review stricter downstream snapshots for the explicit image `detail`, structured tool-result arrays, and additional usage details. `STRICT` requests containing invalid stop values or unsupported extensions can now fail with diagnostics. No dependency changes or migration scripts are required. Roll back by restoring the previous library build and its expected payload contracts.
 
 ## License
 
